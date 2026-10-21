@@ -7,4 +7,5 @@
 - Do not commit local.properties, build caches, SDK/JDK downloads, signing keys, credentials, or machine-specific verification logs.
 - Keep the existing local test signing key private. APK updates must retain the same signing certificate to preserve the installed app's data.
 - Maintain offline Korean and English text recognition and the lightweight ARM64 / ARM32 optimized APK variants.
+- Publish tested APKs as versioned GitHub Release assets and point the README at the release page/assets. Avoid raw repository links as the primary mobile download route. For mobile download issues, explain opening the release page in an external browser; do not tell users to disable security protections.
 - A future update upload means work performed during an active task; no unattended filesystem monitor or recurring job is configured.

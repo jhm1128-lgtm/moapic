@@ -5,13 +5,19 @@
 
 ## 바로 설치하기
 
-- [대부분의 안드로이드 휴대폰용 APK · ARM64 · 약 8.1 MB](https://github.com/jhm1128-lgtm/moapic/raw/refs/heads/main/downloads/moapic-0.2.0-arm64.apk)
-- [32비트 ARM 휴대폰용 APK · 약 7.2 MB](https://github.com/jhm1128-lgtm/moapic/raw/refs/heads/main/downloads/moapic-0.2.0-arm32.apk)
+- [휴대폰에서 다운로드 페이지 열기](https://github.com/jhm1128-lgtm/moapic/releases/tag/v0.2.0)
+- [대부분의 안드로이드 휴대폰용 APK · ARM64 · 약 8.1 MB](https://github.com/jhm1128-lgtm/moapic/releases/download/v0.2.0/moapic-0.2.0-arm64.apk)
+- [32비트 ARM 휴대폰용 APK · 약 7.2 MB](https://github.com/jhm1128-lgtm/moapic/releases/download/v0.2.0/moapic-0.2.0-arm32.apk)
 - [설치·사용 안내](downloads/INSTALL.md)
 
 기존 0.1.0과 같은 테스트 키로 서명했습니다. 기존 앱 위에 업데이트 설치할 수 있습니다.
 공개 스토어 출시용 서명은 아직 구성하지 않았습니다. 실제 기기 기능·화면 검증은 남아 있습니다.
 이 채팅에서 완성한 업데이트는 확인 후 이 저장소에 반영합니다.
+
+모바일에서 링크를 눌러도 내려받아지지 않으면 링크를 복사해 **Chrome** 주소창에서 열고,
+배포 페이지 아래 **Assets → moapic-0.2.0-arm64.apk**를 눌러 주세요.
+Gmail은 APK 파일 첨부를 차단하므로 파일 대신 배포 페이지 링크를 전달하세요.
+([Gmail 공식 안내](https://support.google.com/mail/answer/6590?hl=ko))
 
 ## 구현한 기능
 
