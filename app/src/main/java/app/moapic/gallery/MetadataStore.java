@@ -17,7 +17,8 @@ public final class MetadataStore extends SQLiteOpenHelper {
             if (c.moveToFirst()) {
                 photo.favorite = c.getInt(c.getColumnIndexOrThrow("favorite")) != 0;
                 photo.tags = c.getString(c.getColumnIndexOrThrow("tags"));
-                if (photo.fingerprint.equals(c.getString(c.getColumnIndexOrThrow("fingerprint"))))
+                photo.searchable = photo.fingerprint.equals(c.getString(c.getColumnIndexOrThrow("fingerprint")));
+                if (photo.searchable)
                     photo.text = c.getString(c.getColumnIndexOrThrow("text"));
             }
         }

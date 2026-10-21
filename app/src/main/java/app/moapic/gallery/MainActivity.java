@@ -49,6 +49,10 @@ public final class MainActivity extends Activity {
     private boolean loaded;
     private boolean pendingCaptureAfterOverlay;
     private AlertDialog settingsDialog;
+    private Dialog photoDialog;
+    private String captureMode="screen";
+    private final Runnable refreshSearch=this::refreshSearchText;
+    private final Runnable searchChanged=()->{if(!isDestroyed()&&indexNote!=null){indexNote.setText(app.indexStatus);if(!main.hasCallbacks(refreshSearch))main.postDelayed(refreshSearch,app.indexing?500:0);}};
     private final Runnable reload = this::load;
     private final ContentObserver observer = new ContentObserver(main) {
         @Override public void onChange(boolean selfChange) { main.removeCallbacks(reload); main.postDelayed(reload, 500); }
@@ -58,7 +62,9 @@ public final class MainActivity extends Activity {
         deletion = new DeleteCoordinator(this, worker, () -> { selected.clear(); cache.evictAll(); load(); });
         deletion.restore(state);
         pendingCaptureAfterOverlay = state != null && state.getBoolean("pendingOverlayCapture");
+        if(state!=null)captureMode=state.getString("captureMode","screen");
         buildUi();
+        app.addSearchListener(searchChanged);
         if (state != null) { filter = state.getString("filter", "전체"); search.setText(state.getString("query", "")); }
         getContentResolver().registerContentObserver(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, true, observer);
         handleShared(getIntent());
@@ -69,9 +75,11 @@ public final class MainActivity extends Activity {
         super.onSaveInstanceState(out); out.putString("filter", filter); out.putString("query", search.getText().toString());
         deletion.save(out);
         out.putBoolean("pendingOverlayCapture", pendingCaptureAfterOverlay);
+        out.putString("captureMode",captureMode);
     }
     @Override protected void onNewIntent(Intent intent) { super.onNewIntent(intent); setIntent(intent); handleShared(intent); }
     @Override protected void onDestroy() {
+        app.removeSearchListener(searchChanged);if(photoDialog!=null)photoDialog.dismiss();if(settingsDialog!=null)settingsDialog.dismiss();
         getContentResolver().unregisterContentObserver(observer); main.removeCallbacksAndMessages(null);
         worker.shutdownNow(); images.shutdownNow(); super.onDestroy();
     }
@@ -97,10 +105,10 @@ public final class MainActivity extends Activity {
         actions.addView(captureButton, new LinearLayout.LayoutParams(0, dp(48), 1));
         Button add = iconLabel("이미지 추가", UiIcon.ADD, false, v -> pickImages());
         LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(0, dp(48), 1); ap.leftMargin = dp(8); actions.addView(add, ap); add(root, actions, 18);
-        TextView tileTip = text("알림창에 스크린샷 버튼 추가  ›", 12, PURPLE);
+        TextView tileTip = text("위에서 내려 쓰는 캡처 버튼 만들기  ›", 12, PURPLE);
         tileTip.setPadding(0, dp(10), 0, dp(10)); tileTip.setOnClickListener(v -> addCaptureTile()); add(root, tileTip, 0);
         search = new EditText(this); search.setSingleLine(); search.setTextSize(14); search.setTextColor(INK);
-        search.setHintTextColor(MUTED); search.setHint("⌕  파일명, 태그, 이미지 속 글자 검색");
+        search.setHintTextColor(MUTED); search.setHint("⌕  숫자 · ABC · 한글로 사진 찾기");
         search.setBackground(shape(0xFFFFFFFF, 16)); search.setPadding(dp(16), 0, dp(12), 0);
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, dp(50)); sp.topMargin = dp(4); root.addView(search, sp);
         search.addTextChangedListener(new TextWatcher() {
@@ -112,8 +120,8 @@ public final class MainActivity extends Activity {
         tabs = row(); scroll.addView(tabs); add(root, scroll, 12); drawTabs();
         permissionNote = text("", 12, PURPLE); permissionNote.setPadding(dp(12), dp(10), dp(12), dp(10));
         permissionNote.setBackground(shape(0xFFECE8FA, 12)); permissionNote.setOnClickListener(v -> requestAccess()); add(root, permissionNote, 10);
-        LinearLayout indexRow = row(); indexNote = text("이미지 속 글자도 찾아보세요", 11, MUTED); indexRow.addView(indexNote, weight());
-        indexRow.addView(iconLabel("글자 읽기", UiIcon.TEXT, false, v -> index())); add(root, indexRow, 4);
+        LinearLayout indexRow = row();ImageView searchSymbol=new ImageView(this);searchSymbol.setImageDrawable(new UiIcon(UiIcon.TEXT,PURPLE));searchSymbol.setContentDescription("숫자·영문·한글 검색");indexRow.addView(searchSymbol,new LinearLayout.LayoutParams(dp(28),dp(32)));
+        indexNote = text("사진 속 숫자·영문·한글로 검색해 보세요", 11, MUTED);indexNote.setPadding(dp(8),0,0,0);indexRow.addView(indexNote, weight());add(root,indexRow,8);
         FrameLayout content = new FrameLayout(this); root.addView(content, new LinearLayout.LayoutParams(-1, 0, 1));
         grid = new GridView(this); grid.setNumColumns(3); grid.setHorizontalSpacing(dp(8)); grid.setVerticalSpacing(dp(8));
         grid.setClipToPadding(false); grid.setPadding(0, dp(8), 0, dp(8)); grid.setSelector(android.R.color.transparent);
@@ -163,7 +171,7 @@ public final class MainActivity extends Activity {
             try {
                 List<Photo> photos = app.media.all();
                 Set<String> folders = prefs.getStringSet("folders", Collections.emptySet());
-                for (Photo p : photos) if (included(p, folders)) app.metadata.hydrate(p);
+                List<Photo> searchable=new ArrayList<>();for (Photo p : photos) if (included(p, folders)){app.metadata.hydrate(p);searchable.add(p);}app.prepareSearch(searchable);
                 main.post(() -> { if (!isDestroyed() && ticket == generation) { all = photos; loaded = true; rebuildLibrary(); } });
             } catch (Exception error) {
                 main.post(() -> { if (!isDestroyed() && ticket == generation) { all = new ArrayList<>(); loaded = true; rebuildLibrary(); empty.setText("사진을 읽지 못했어요.\n접근 권한을 확인한 후 다시 열어 주세요."); } });
@@ -193,7 +201,7 @@ public final class MainActivity extends Activity {
             if (matchesTab && p.matches(query)) visible.add(p);
         }
         empty.setVisibility(visible.isEmpty() ? View.VISIBLE : View.GONE);
-        empty.setText(!loaded ? "이미지를 모으고 있어요…" : !query.isEmpty() ? "검색 결과가 없어요.\n‘글자 읽기’를 누르면 이미지 속 문구도 검색돼요."
+        empty.setText(!loaded ? "이미지를 모으고 있어요…" : !query.isEmpty() ? app.indexing?"사진 속 내용을 검색할 수 있게 준비 중이에요.\n준비된 사진부터 결과가 나타나요.":"검색 결과가 없어요.\n사진 속 숫자, 영문, 한글을 입력해 보세요."
             : library.isEmpty() ? "아직 모아둔 이미지가 없어요.\n\n사진 접근을 허용하거나 ‘이미지 추가’를 눌러보세요.\n다른 폴더의 이미지는 설정에서 포함할 수 있어요."
             : "이곳에 모인 이미지가 없어요.\n이미지를 길게 눌러 정리해 보세요.");
         adapter.notifyDataSetChanged(); drawSelection();
@@ -218,13 +226,11 @@ public final class MainActivity extends Activity {
     private void index() {
         if (library.isEmpty()) { toast("먼저 이미지를 추가해 주세요."); return; }
         if (app.indexing) { toast(app.indexStatus); indexNote.setText(app.indexStatus); return; }
-        WeakReference<MainActivity> activity = new WeakReference<>(this);
-        app.index(new ArrayList<>(library), () -> {
-            MainActivity current = activity.get();
-            if (current != null && !current.isDestroyed()) current.main.post(() -> { if (!current.isDestroyed()) { current.load(); current.toast(current.app.indexStatus); } });
-        });
-        indexNote.setText("이미지 속 글자를 기기에서 읽고 있어요…");
-        toast("사진을 기기에서 읽어요. 앱을 닫으면 중단될 수 있어요.");
+        app.retrySearch(new ArrayList<>(library));indexNote.setText(app.indexStatus);toast("사진 검색을 다시 준비해요.");
+    }
+    private void refreshSearchText(){
+        if(isDestroyed())return;int ticket=generation;List<Photo> photos=new ArrayList<>(library);
+        worker.execute(()->{for(Photo p:photos)app.metadata.hydrate(p);main.post(()->{if(!isDestroyed()&&ticket==generation){indexNote.setText(app.indexStatus);applyFilter();}});});
     }
     private void folders() {
         TreeSet<String> unique = new TreeSet<>(); for (Photo p : all) unique.add(p.folder);
@@ -246,18 +252,19 @@ public final class MainActivity extends Activity {
         }
         add(layout, button("추가로 모을 폴더 선택", false, v -> folders()), 8);
         add(layout, button("사진 접근 범위 변경", false, v -> requestAccess()), 8);
-        add(layout, iconLabel("알림창 스크린샷 버튼 추가", UiIcon.CAPTURE, false, v -> addCaptureTile()), 8);
+        add(layout, iconLabel("위에서 내려 쓰는 캡처 버튼 만들기", UiIcon.CAPTURE, false, v -> addCaptureTile()), 8);
         add(layout, iconLabel("홈 화면 캡처 바로가기", UiIcon.SHORTCUT, false, v -> addCaptureShortcut()), 8);
         add(layout, button("화면 위 카운트다운 표시 설정", false, v -> openCountdownPermission()), 8);
         add(layout, button("시작 화면 다시 보기", false, v -> { if (settingsDialog != null) settingsDialog.dismiss(); showIntro(); }), 8);
+        add(layout,iconLabel("사진 검색 다시 준비하기",UiIcon.TEXT,false,v->index()),8);
         add(layout, text("카카오톡 등 다른 앱에서 저장한 이미지는 해당 폴더를 추가해 주세요. 다운로드 여부는 저장 위치를 기준으로 구분해요.", 12, MUTED), 12);
         add(layout, text("개인정보\n사진·태그·인식한 글자는 기기에 저장됩니다. 계정, 광고, 분석 서버는 사용하지 않아요. 앱을 지우면 태그와 즐겨찾기도 지워집니다. 공유하면 선택한 앱으로 원본이 전달돼요.", 12, MUTED), 16);
         add(layout, button("태그·즐겨찾기·검색 색인 초기화", false, v -> {
-            if (app.indexing) { toast("글자 읽기가 끝난 후 초기화해 주세요."); return; }
+            if (app.indexing) { toast("사진 검색 준비가 끝난 후 초기화해 주세요."); return; }
             new AlertDialog.Builder(this).setTitle("정리 정보를 초기화할까요?").setMessage("태그, 즐겨찾기, 읽어둔 글자를 지워요. 사진 원본은 유지됩니다.")
-                .setNegativeButton("취소", null).setPositiveButton("초기화", (d,w) -> { app.metadata.clear(); cache.evictAll(); app.indexStatus = "이미지 속 글자도 찾아보세요"; load(); }).show();
+                .setNegativeButton("취소", null).setPositiveButton("초기화", (d,w) -> { app.metadata.clear();app.resetSearchAttempts();cache.evictAll();app.indexStatus="사진 속 숫자·영문·한글로 검색해 보세요";load(); }).show();
         }), 12);
-        add(layout, text("모아픽 0.2.0 · 가볍게 모아보아요", 11, MUTED), 14);
+        add(layout, text("모아픽 0.3.0 · 가볍게 모아보아요", 11, MUTED), 14);
         ScrollView scroll = new ScrollView(this); scroll.addView(layout);
         settingsDialog = new AlertDialog.Builder(this).setTitle("내 보관함 설정").setView(scroll).setPositiveButton("닫기", null).show();
     }
@@ -282,23 +289,19 @@ public final class MainActivity extends Activity {
         try { startActivity(Intent.createChooser(intent, "이미지 공유")); } catch (Exception e) { toast("공유할 수 있는 앱이 없어요."); }
     }
     private void detail(Photo photo) {
-        LinearLayout layout = column(); layout.setPadding(dp(12), dp(8), dp(12), dp(8));
-        ImageView image = new ImageView(this); image.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        layout.addView(image, new LinearLayout.LayoutParams(-1, dp(330))); bindImage(image, photo, 1400);
-        add(layout, text(new SimpleDateFormat("yyyy.MM.dd  HH:mm", Locale.KOREA).format(new Date(photo.added * 1000)) + " · " + photo.kind, 12, MUTED), 10);
-        add(layout, text(photo.folder, 11, MUTED), 4);
-        if (!photo.tags.isEmpty()) add(layout, text(photo.tags, 13, PURPLE), 10);
+        Dialog dialog=new Dialog(this,android.R.style.Theme_Material_Light_NoActionBar);photoDialog=dialog;
+        LinearLayout layout=column();layout.setBackgroundColor(0xff17151f);layout.setPadding(dp(12),dp(12),dp(12),dp(12));
+        LinearLayout header=row();TextView name=text(photo.name,13,Color.WHITE);name.setMaxLines(1);name.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);header.addView(name,weight());header.addView(button("닫기",false,v->dialog.dismiss()));layout.addView(header);
+        ZoomPhotoView original=new ZoomPhotoView(this,photo.uri);layout.addView(original,new LinearLayout.LayoutParams(-1,0,1));
+        TextView hint=text("두 손가락으로 확대 · 두 번 눌러 원본 크기로 보기",12,0xffd8d0ef);hint.setGravity(Gravity.CENTER);add(layout,hint,6);
         LinearLayout actions = row();
         Button star = button(photo.favorite ? "★ 저장됨" : "☆ 즐겨찾기", false, null);
         star.setOnClickListener(v -> { photo.favorite = !photo.favorite; app.metadata.annotate(photo); star.setText(photo.favorite ? "★ 저장됨" : "☆ 즐겨찾기"); applyFilter(); });
         actions.addView(star, weight()); actions.addView(button("태그", false, v -> editTags(Collections.singletonList(photo))));
         actions.addView(button("공유", false, v -> share(Collections.singletonList(photo)))); add(layout, actions, 12);
-        TextView recognized = text(photo.text.isEmpty() ? "‘글자 읽기’를 실행하면 이 이미지의 글자로 검색할 수 있어요." : photo.text, 12, MUTED);
-        recognized.setTextIsSelectable(true); add(layout, recognized, 12);
-        ScrollView scroll = new ScrollView(this); scroll.addView(layout);
-        AlertDialog dialog = new AlertDialog.Builder(this).setTitle(photo.name).setView(scroll).setPositiveButton("닫기", null).create();
         Button delete = iconLabel("사진 삭제", UiIcon.DELETE, false, v -> { dialog.dismiss(); deletion.request(Collections.singletonList(photo)); });
-        delete.setTextColor(0xFFBE4A62); add(layout, delete, 12); dialog.show();
+        delete.setTextColor(0xFFBE4A62);add(layout,delete,8);dialog.setContentView(layout);dialog.setOnDismissListener(d->original.close());dialog.show();
+        dialog.getWindow().setLayout(-1,-1);layout.setOnApplyWindowInsetsListener((v,insets)->{if(Build.VERSION.SDK_INT>=30){Insets bars=insets.getInsets(WindowInsets.Type.systemBars());v.setPadding(bars.left+dp(12),bars.top+dp(12),bars.right+dp(12),bars.bottom+dp(12));}return insets;});layout.requestApplyInsets();
     }
     private void pickImages() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT); intent.setType("image/*"); intent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -325,14 +328,18 @@ public final class MainActivity extends Activity {
     }
     private void explainCapture() {
         if (CaptureService.running) { toast("이미 화면을 캡처하고 있어요. 잠시 후 다시 시도해 주세요."); return; }
+        new AlertDialog.Builder(this).setTitle("어떻게 캡처할까요?").setItems(new String[]{"화면 전체 · 한 장 저장","선택 영역 · 필요한 부분만 저장","긴 페이지 · 스크롤하며 이어 저장"},(d,which)->{captureMode=which==1?"area":which==2?"long":"screen";explainCaptureMode();}).setNegativeButton("취소",null).show();
+    }
+    private void explainCaptureMode(){
+        String instructions=captureMode.equals("area")?"7초 안에 원하는 화면을 열어 주세요. 찍힌 화면에서 네모의 모서리를 움직여 필요한 부분만 저장할 수 있어요.":captureMode.equals("long")?"7초 안에 페이지의 맨 위를 열어 주세요.\n① 스크롤되는 내용만 선택\n② 반 화면씩 아래로 스크롤하고 ‘화면 추가’\n③ 끝까지 내린 뒤 ‘완료·저장’\n\n겹치는 부분이 있어야 이어 붙일 수 있어요. 고정 메뉴는 처음 선택에서 제외해 주세요.":"7초 안에 원하는 화면을 열어 주세요. 한 장을 저장한 뒤 자동으로 끝나요.";
         new AlertDialog.Builder(this).setTitle("다른 화면을 캡처해 모으기")
-            .setMessage("화면 공유를 허용하면 모아픽이 뒤로 이동합니다. 7초 안에 캡처할 화면을 열어 주세요. 한 장을 저장한 뒤 화면 공유는 자동으로 종료돼요.\n\n다른 앱으로 이동해 캡처하려면 시스템 창에서 ‘전체 화면’을 선택해 주세요. 보안이 적용된 앱은 캡처되지 않을 수 있어요.")
+            .setMessage(instructions+"\n\n시스템 창에서는 ‘전체 화면’을 선택해 주세요. 보안 화면은 캡처가 제한될 수 있어요.")
             .setNegativeButton("취소", null).setPositiveButton("캡처 시작", (d,w) -> {
                 if (!Settings.canDrawOverlays(this)) {
-                    new AlertDialog.Builder(this).setTitle("카운트다운을 화면에 표시할까요?")
-                        .setMessage("다른 앱에서도 7 → 6 → 5처럼 남은 시간을 보려면 ‘다른 앱 위에 표시’를 허용해 주세요. 숫자는 캡처 전에 사라져요. 허용하지 않으면 알림에서 남은 시간을 표시합니다.")
+                    AlertDialog.Builder permission=new AlertDialog.Builder(this).setTitle("화면 위 표시를 허용해 주세요")
+                        .setMessage(captureMode.equals("screen")?"다른 앱에서도 카운트다운을 보려면 ‘다른 앱 위에 표시’를 허용해 주세요.":"선택 영역을 고르거나 긴 캡처 버튼을 누르려면 ‘다른 앱 위에 표시’를 허용해야 해요.")
                         .setPositiveButton("표시 허용 설정", (dialog, which) -> { pendingCaptureAfterOverlay = true; openCountdownPermission(); })
-                        .setNeutralButton("알림만 사용", (dialog, which) -> prepareCapture()).setNegativeButton("취소", null).show();
+                        .setNegativeButton("취소",null);if(captureMode.equals("screen"))permission.setNeutralButton("알림만 사용",(dialog,which)->prepareCapture());permission.show();
                 } else prepareCapture();
             }).show();
     }
@@ -341,6 +348,7 @@ public final class MainActivity extends Activity {
         catch (Exception e) { pendingCaptureAfterOverlay = false; toast("기기 설정에서 모아픽의 ‘다른 앱 위에 표시’를 허용해 주세요."); }
     }
     private void prepareCapture() {
+        if(!captureMode.equals("screen")&&!Settings.canDrawOverlays(this)){toast("선택 영역·긴 캡처는 ‘다른 앱 위에 표시’를 허용한 후 사용할 수 있어요.");return;}
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, NOTIFY);
         else beginCapture();
@@ -358,7 +366,7 @@ public final class MainActivity extends Activity {
         }
         if (result != RESULT_OK || data == null) return;
         if (request == CAPTURE) {
-            Intent service = new Intent(this, CaptureService.class).putExtra("code", result).putExtra("data", data);
+            Intent service = new Intent(this, CaptureService.class).putExtra("code", result).putExtra("data", data).putExtra("mode",captureMode);
             startForegroundService(service); moveTaskToBack(true); toast("7초 뒤 한 장을 캡처해요. 원하는 화면으로 이동해 주세요.");
         } else if (request == PICK) {
             ArrayList<Uri> uris = new ArrayList<>();
@@ -412,6 +420,11 @@ public final class MainActivity extends Activity {
     }
     private int dp(float size) { return Math.round(size * getResources().getDisplayMetrics().density); }
     private void addCaptureTile() {
+        new AlertDialog.Builder(this).setTitle("위에서 내려 쓰는 버튼이에요")
+            .setMessage("앱을 열지 않고 캡처하고 싶을 때 써요. 한 번만 추가하면 돼요.\n\n① 화면 맨 위에서 아래로 두 번 내려요.\n② ‘모아픽 캡처’를 누르면 화면을 찍어요.\n\n아래 ‘버튼 추가’를 눌러 먼저 만들어 보세요.")
+            .setPositiveButton(Build.VERSION.SDK_INT>=33?"버튼 추가":"추가 방법 보기",(d,w)->requestCaptureTile()).setNegativeButton("나중에",null).show();
+    }
+    private void requestCaptureTile(){
         if (Build.VERSION.SDK_INT >= 33) {
             try {
                 getSystemService(StatusBarManager.class).requestAddTileService(new ComponentName(this, CaptureTileService.class), "모아픽 캡처",
@@ -424,15 +437,15 @@ public final class MainActivity extends Activity {
         } else tileInstructions();
     }
     private void tileInstructions() {
-        new AlertDialog.Builder(this).setTitle("알림창에 캡처 버튼 추가")
-            .setMessage("화면 위에서 아래로 두 번 내려 빠른 설정을 열어 주세요. 편집(연필)에서 ‘모아픽 캡처’를 찾아 버튼 목록으로 옮기면 돼요.\n\n버튼을 누르면 시스템 화면 공유 허용을 거쳐 화면 한 장을 저장해요.")
+        new AlertDialog.Builder(this).setTitle("딱 한 번만 추가해 주세요")
+            .setMessage("① 화면 맨 위를 아래로 두 번 쓸어내려요.\n\n② 연필 모양 또는 ‘편집’을 눌러요.\n\n③ 아래에 있는 ‘모아픽 캡처’를 위쪽 버튼들 사이로 끌어올려요.\n\n이제 그 버튼을 누르면 바로 캡처할 수 있어요.")
             .setPositiveButton("확인", null).show();
     }
     private void addCaptureShortcut() {
         android.content.pm.ShortcutManager manager = getSystemService(android.content.pm.ShortcutManager.class);
         if (manager == null || !manager.isRequestPinShortcutSupported()) { toast("이 홈 화면에서는 바로가기 추가를 지원하지 않아요."); return; }
         android.content.pm.ShortcutInfo shortcut = new android.content.pm.ShortcutInfo.Builder(this, "capture")
-            .setShortLabel("모아픽 캡처").setIcon(Icon.createWithResource(this, R.drawable.ic_launcher))
+            .setShortLabel("모아픽 캡처").setIcon(Icon.createWithResource(this, R.mipmap.ic_launcher))
             .setIntent(new Intent(this, CaptureActivity.class).setAction(Intent.ACTION_VIEW)).build();
         manager.requestPinShortcut(shortcut, null);
     }
