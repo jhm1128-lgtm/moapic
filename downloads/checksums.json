@@ -1,0 +1,10 @@
+{
+  "moapic-0.2.0-arm32.apk": {
+    "bytes": 7177645,
+    "sha256": "1d3ba194b82ec207d5d5e8a75c4be59b6517f7d8f58adb0571ebe54d1f71c580"
+  },
+  "moapic-0.2.0-arm64.apk": {
+    "bytes": 8070191,
+    "sha256": "9fa2e299b8441963d30b9709f4e3ecf427677425f29c29a1d20785bc40cac78d"
+  }
+}

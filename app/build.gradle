@@ -1,0 +1,43 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'app.moapic.gallery'
+    compileSdk 36
+    defaultConfig {
+        applicationId 'app.moapic.gallery'
+        minSdk 29
+        targetSdk 36
+        versionCode 2
+        versionName '0.2.0'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    buildTypes {
+        release {
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+        preview {
+            initWith release
+            signingConfig signingConfigs.debug
+            matchingFallbacks = ['release']
+        }
+    }
+    packaging { jniLibs { useLegacyPackaging = true } }
+    splits {
+        abi {
+            enable providers.gradleProperty('deviceApk').orNull == 'true'
+            reset()
+            include 'arm64-v8a', 'armeabi-v7a'
+            universalApk false
+        }
+    }
+}
+dependencies {
+    implementation 'com.google.mlkit:text-recognition-korean:16.0.1'
+    implementation 'com.google.mlkit:text-recognition:16.0.1'
+    testImplementation 'junit:junit:4.13.2'
+}
+tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
